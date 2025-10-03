@@ -22,7 +22,7 @@ class AdminHandlers:
 
     # Остальные методы остаются без изменений...
     async def check_admin_password(self, message: types.Message, state: FSMContext):
-        ADMIN_PASSWORD = "admin123"
+        ADMIN_PASSWORD = ""
 
         if message.text == ADMIN_PASSWORD:
             await message.answer(
