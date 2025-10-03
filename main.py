@@ -15,8 +15,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Токены и настройки
-BOT_TOKEN = "7804737490:AAExbhUgT_9MrrvtLe-zxe4-AyBB7RyeNaI"
-ADMIN_PASSWORD = "admin123"
+BOT_TOKEN = ""
+ADMIN_PASSWORD = ""
 
 
 async def main():
