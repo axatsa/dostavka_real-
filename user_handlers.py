@@ -3,6 +3,7 @@ import logging
 from aiogram import Bot, types, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
+from datetime import datetime, time
 
 from database import Database
 from keyboards import *
@@ -37,6 +38,31 @@ class UserHandlers:
                 reply_markup=get_phone_keyboard()
             )
             await state.set_state(RegistrationStates.waiting_for_phone)
+
+    def is_valid_date(self, date_str: str) -> bool:
+        try:
+            input_date = datetime.strptime(date_str, "%d.%m.%Y").date()
+            today = datetime.now().date()
+            return input_date >= today
+        except ValueError:
+            return False
+
+    def is_valid_time(self, time_str: str) -> bool:
+        try:
+            datetime.strptime(time_str, "%H:%M")
+            return True
+        except ValueError:
+            return False
+
+    def is_valid_datetime_combination(self, date_str: str, time_str: str) -> bool:
+        try:
+            input_datetime = datetime.strptime(
+                f"{date_str} {time_str}",
+                "%d.%m.%Y %H:%M"
+            )
+            return input_datetime > datetime.now()
+        except ValueError:
+            return False
 
     # ===== ОБРАБОТЧИКИ РЕГИСТРАЦИИ =====
     async def process_phone(self, message: types.Message, state: FSMContext):
@@ -229,15 +255,60 @@ class UserHandlers:
         await state.set_state(OrderStates.waiting_for_date)
 
     async def process_delivery_date(self, message: types.Message, state: FSMContext):
-        date = message.text
-        await state.update_data(delivery_date=date)
+        date = message.text.strip()
 
-        await message.answer("🕐 Введите время доставки (например, 14:00):")
+        if not self.is_valid_date(date):
+            await message.answer(
+                "❌ Неверный формат даты или выбрана прошедшая дата. "
+                "Пожалуйста, введите дату в формате ДД.ММ.ГГГГ (например, 25.12.2023)"
+            )
+            return
+
+        await state.update_data(delivery_date=date)
+        current_time = datetime.now().strftime("%H:%M")
+
+        await message.answer(
+            f"🕐 Введите время доставки (например, {current_time}):\n"
+            "• Время должно быть в формате ЧЧ:ММ (например, 14:30)\n"
+            "• Время работы: с 09:00 до 22:00"
+        )
         await state.set_state(OrderStates.waiting_for_time)
 
     async def process_delivery_time(self, message: types.Message, state: FSMContext):
-        time = message.text
-        await state.update_data(delivery_time=time)
+        time_str = message.text.strip()
+
+        # Проверяем формат времени
+        if not self.is_valid_time(time_str):
+            await message.answer(
+                "❌ Неверный формат времени. Пожалуйста, введите время в формате ЧЧ:ММ\n"
+                "Пример: 14:30"
+            )
+            return
+
+        # Проверяем рабочее время (9:00-22:00)
+        try:
+            delivery_time = datetime.strptime(time_str, "%H:%M").time()
+            if not (time(9, 0) <= delivery_time <= time(22, 0)):
+                await message.answer(
+                    "❌ Время доставки возможно только с 09:00 до 22:00. "
+                    "Пожалуйста, выберите другое время."
+                )
+                return
+        except ValueError:
+            pass  # Если время не распарсилось, пропускаем эту проверку
+
+        # Получаем выбранную дату из состояния
+        data = await state.get_data()
+        date_str = data.get('delivery_date')
+
+        # Проверяем, что выбранное время не в прошлом
+        if not self.is_valid_datetime_combination(date_str, time_str):
+            await message.answer(
+                "❌ Выбрано прошедшее время. Пожалуйста, выберите будущее время."
+            )
+            return
+
+        await state.update_data(delivery_time=time_str)
 
         await message.answer(
             "📍 Отправьте адрес доставки:\n"
@@ -349,6 +420,7 @@ class UserHandlers:
             reply_markup=get_main_menu_keyboard()
         )
         await state.clear()
+
     async def cancel_order(self, callback: types.CallbackQuery, state: FSMContext):
         await callback.message.edit_text("❌ Заказ отменен")
         await callback.message.answer(

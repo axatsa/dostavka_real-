@@ -5,10 +5,16 @@ from aiogram.fsm.context import FSMContext
 from database import Database
 from keyboards import *
 from states import AdminStates
+from regos_integration import REGOSIntegration
+import os
 
 logger = logging.getLogger(__name__)
 
 db = Database()
+
+REGOS_API_KEY = os.getenv("REGOS_API_KEY")
+REGOS_API_URL = os.getenv("REGOS_API_URL")
+regos = REGOSIntegration(api_key=REGOS_API_KEY, api_url=REGOS_API_URL)
 
 
 class AdminHandlers:
@@ -419,4 +425,141 @@ class AdminHandlers:
         conn.commit()
         conn.close()
 
-    # ... остальные методы без изменений ...
+    async def show_regos_orders_menu(self, message: types.Message):
+        """Show REGOS orders management menu"""
+        await message.answer(
+            "📦 Управление заказами REGOS",
+            reply_markup=get_regos_orders_keyboard()
+        )
+        await AdminStates.regos_orders_menu.set()
+
+    async def sync_regos_orders(self, message: types.Message):
+        """Sync local orders with REGOS system"""
+        msg = await message.answer("🔄 Синхронизация заказов с REGOS...")
+        
+        try:
+            results = regos.sync_orders(db)
+            success_count = sum(1 for r in results if r['status'] == 'success')
+            error_count = len(results) - success_count
+            
+            response = (
+                f"✅ Синхронизация завершена!\n"
+                f"• Успешно: {success_count}\n"
+                f"• Ошибок: {error_count}"
+            )
+            
+            if error_count > 0:
+                error_details = "\n\nДетали ошибок:\n"
+                for r in results:
+                    if r['status'] == 'error':
+                        error_details += f"Заказ #{r['order_id']}: {r['message']}\n"
+                response += error_details
+                
+        except Exception as e:
+            logger.error(f"Error syncing REGOS orders: {e}")
+            response = f"❌ Ошибка при синхронизации с REGOS: {str(e)}"
+            
+        await msg.edit_text(response, reply_markup=get_regos_orders_keyboard())
+
+    async def show_regos_order_status(self, message: types.Message, state: FSMContext):
+        """Show status of a specific REGOS order"""
+        await message.answer("Введите ID заказа для проверки статуса:")
+        await state.set_state(AdminStates.regos_check_order_status)
+
+    async def process_regos_order_status(self, message: types.Message, state: FSMContext):
+        """Process REGOS order status check"""
+        try:
+            order_id = int(message.text)
+            order = db.get_order_by_id(order_id)
+            
+            if not order:
+                await message.answer("❌ Заказ не найден!")
+                return
+                
+            if not order.get('regos_order_id'):
+                await message.answer("❌ У этого заказа нет привязки к REGOS")
+                return
+                
+            # Get status from REGOS
+            status = regos.get_order_status(order['regos_order_id'])
+            
+            if not status:
+                await message.answer("❌ Не удалось получить статус из REGOS")
+                return
+                
+            # Update local status
+            db.update_regos_status(order_id, status.get('status', 'unknown'))
+            
+            # Format status message
+            status_text = (
+                f"📋 Статус заказа #{order_id} в REGOS:\n"
+                f"• ID в REGOS: {order['regos_order_id']}\n"
+                f"• Текущий статус: {status.get('status', 'unknown')}\n"
+                f"• Обновлено: {status.get('updated_at', 'неизвестно')}"
+            )
+            
+            if 'history' in status:
+                status_text += "\n\n📜 История статусов:\n"
+                for item in status['history']:
+                    status_text += f"• {item['status']} - {item['timestamp']}\n"
+            
+            await message.answer(status_text, reply_markup=get_regos_orders_keyboard())
+            
+        except ValueError:
+            await message.answer("❌ Введите корректный ID заказа (число)")
+            
+    async def update_regos_order_status(self, message: types.Message, state: FSMContext):
+        """Start process of updating REGOS order status"""
+        await message.answer(
+            "Введите ID заказа и новый статус в формате:\n"
+            "<ID заказа> <новый статус>\n\n"
+            "Пример:\n"
+            "42 in_progress"
+        )
+        await state.set_state(AdminStates.regos_update_order_status)
+        
+    async def process_update_regos_status(self, message: types.Message, state: FSMContext):
+        """Process REGOS order status update"""
+        try:
+            parts = message.text.split(maxsplit=1)
+            if len(parts) != 2:
+                raise ValueError()
+                
+            order_id = int(parts[0])
+            new_status = parts[1].strip()
+            
+            order = db.get_order_by_id(order_id)
+            if not order:
+                await message.answer("❌ Заказ не найден!")
+                return
+                
+            if not order.get('regos_order_id'):
+                await message.answer("❌ У этого заказа нет привязки к REGOS")
+                return
+                
+            # Update status in REGOS
+            success = regos.update_order_status(
+                order['regos_order_id'], 
+                new_status,
+                f"Status updated by admin via bot (Order #{order_id})"
+            )
+            
+            if success:
+                # Update local status
+                db.update_regos_status(order_id, new_status)
+                await message.answer(
+                    f"✅ Статус заказа #{order_id} обновлен на '{new_status}'",
+                    reply_markup=get_regos_orders_keyboard()
+                )
+            else:
+                await message.answer(
+                    "❌ Не удалось обновить статус в REGOS. Проверьте логи для деталей.",
+                    reply_markup=get_regos_orders_keyboard()
+                )
+                
+        except (ValueError, IndexError):
+            await message.answer(
+                "❌ Неверный формат. Используйте: <ID заказа> <новый статус>"
+            )
+
+    # ... (rest of the file remains the same) ...

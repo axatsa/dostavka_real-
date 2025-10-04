@@ -7,7 +7,7 @@ logger = logging.getLogger(__name__)
 
 
 class Database:
-    def __init__(self, db_name="shop_bot.db"):
+    def __init__(self, db_name="shop_bot_regos.db"):
         self.db_name = db_name
         self.init_db()
 
@@ -70,6 +70,8 @@ class Database:
                 delivery_time TEXT NOT NULL,
                 delivery_address TEXT NOT NULL,
                 status TEXT DEFAULT 'pending',
+                regos_order_id TEXT,
+                regos_status TEXT,
                 created_at TEXT NOT NULL,
                 FOREIGN KEY (user_id) REFERENCES users (user_id)
             )
@@ -227,27 +229,161 @@ class Database:
         conn.close()
 
     # === ORDER METHODS ===
+    def update_order_status(self, order_id: int, status: str):
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            UPDATE orders SET status = ? WHERE id = ?
+        ''', (status, order_id))
+        conn.commit()
+        conn.close()
+        return cursor.rowcount > 0
+
+    def set_regos_order_id(self, order_id: int, regos_order_id: str):
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            UPDATE orders 
+            SET regos_order_id = ?, regos_status = 'pending' 
+            WHERE id = ?
+        ''', (regos_order_id, order_id))
+        conn.commit()
+        conn.close()
+        return cursor.rowcount > 0
+
     def create_order(self, user_id: int, total_amount: float, delivery_date: str,
-                     delivery_time: str, delivery_address: str, cart_items: List[Dict]) -> int:
+                     delivery_time: str, delivery_address: str, cart_items: List[Dict]):
         conn = self.get_connection()
         cursor = conn.cursor()
 
+        # Create the order
         cursor.execute('''
-            INSERT INTO orders (user_id, total_amount, delivery_date, delivery_time, delivery_address, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-        ''', (user_id, total_amount, delivery_date, delivery_time, delivery_address, datetime.now().isoformat()))
+            INSERT INTO orders (
+                user_id, total_amount, delivery_date, 
+                delivery_time, delivery_address, created_at,
+                status, regos_order_id, regos_status
+            ) VALUES (?, ?, ?, ?, ?, ?, 'pending', NULL, 'not_synced')
+        ''', (user_id, total_amount, delivery_date, delivery_time,
+              delivery_address, datetime.now().isoformat()))
 
         order_id = cursor.lastrowid
 
+        # Add order items
         for item in cart_items:
             cursor.execute('''
                 INSERT INTO order_items (order_id, product_id, quantity, price)
                 VALUES (?, ?, ?, ?)
-            ''', (order_id, item["id"], item["quantity"], item["price"]))
+            ''', (order_id, item.get('id', item.get('product_id')), item['quantity'], item['price']))
 
-        # Очищаем корзину
+        # Clear the user's cart
         cursor.execute('DELETE FROM carts WHERE user_id = ?', (user_id,))
 
         conn.commit()
         conn.close()
         return order_id
+
+    def update_regos_status(self, order_id: int, regos_status: str):
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            UPDATE orders 
+            SET regos_status = ? 
+            WHERE id = ?
+        ''', (regos_status, order_id))
+        conn.commit()
+        conn.close()
+        return cursor.rowcount > 0
+
+    def get_orders_for_regos_sync(self):
+        """Get all orders that need to be synced with REGOS"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT id, user_id, total_amount, delivery_date, delivery_time, 
+                   delivery_address, created_at
+            FROM orders 
+            WHERE regos_status = 'not_synced' OR regos_status IS NULL
+        ''')
+        orders = cursor.fetchall()
+        
+        result = []
+        for order in orders:
+            # Get order items
+            cursor.execute('''
+                SELECT p.name, oi.quantity, oi.price
+                FROM order_items oi
+                JOIN products p ON oi.product_id = p.id
+                WHERE oi.order_id = ?
+            ''', (order[0],))
+            items = cursor.fetchall()
+            
+            result.append({
+                'id': order[0],
+                'user_id': order[1],
+                'total_amount': order[2],
+                'delivery_date': order[3],
+                'delivery_time': order[4],
+                'delivery_address': order[5],
+                'created_at': order[6],
+                'items': [{'name': i[0], 'quantity': i[1], 'price': i[2]} for i in items]
+            })
+            
+        conn.close()
+        return result
+
+    def get_order_by_id(self, order_id: int):
+        """Get order by ID with all details"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        # Get order info
+        cursor.execute('''
+            SELECT id, user_id, total_amount, delivery_date, delivery_time, 
+                   delivery_address, status, regos_order_id, regos_status, created_at
+            FROM orders 
+            WHERE id = ?
+        ''', (order_id,))
+        
+        order_data = cursor.fetchone()
+        if not order_data:
+            return None
+            
+        # Get order items
+        cursor.execute('''
+            SELECT p.name, oi.quantity, oi.price, p.unit
+            FROM order_items oi
+            JOIN products p ON oi.product_id = p.id
+            WHERE oi.order_id = ?
+        ''', (order_id,))
+        items = cursor.fetchall()
+        
+        # Get user info
+        cursor.execute('''
+            SELECT name, phone FROM users WHERE user_id = ?
+        ''', (order_data[1],))
+        user_data = cursor.fetchone()
+        
+        conn.close()
+        
+        return {
+            'id': order_data[0],
+            'user': {
+                'id': order_data[1],
+                'name': user_data[0] if user_data else 'Unknown',
+                'phone': user_data[1] if user_data else 'Unknown'
+            },
+            'total_amount': order_data[2],
+            'delivery_date': order_data[3],
+            'delivery_time': order_data[4],
+            'delivery_address': order_data[5],
+            'status': order_data[6],
+            'regos_order_id': order_data[7],
+            'regos_status': order_data[8] or 'not_synced',
+            'created_at': order_data[9],
+            'items': [{
+                'name': i[0],
+                'quantity': i[1],
+                'price': i[2],
+                'unit': i[3]
+            } for i in items]
+        }

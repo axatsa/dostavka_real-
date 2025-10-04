@@ -1,9 +1,12 @@
 # main.py (полная исправленная версия)
 import asyncio
 import logging
-from aiogram import Bot, Dispatcher, F
+
+from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
+
 
 from database import Database
 from states import AdminStates, ShoppingStates, OrderStates, RegistrationStates
@@ -15,8 +18,16 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Токены и настройки
-BOT_TOKEN = "7804737490:AAExbhUgT_9MrrvtLe-zxe4-AyBB7RyeNaI"
-ADMIN_PASSWORD = "admin123"
+# Add at the top of main.py
+from dotenv import load_dotenv
+import os
+
+# Load environment variables
+load_dotenv()
+
+# Then use them like this:
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
 
 
 async def main():
@@ -73,7 +84,9 @@ async def main():
 
     # ===== РЕГИСТРАЦИЯ ОБРАБОТЧИКОВ АДМИНА =====
     # Команда админа - ВАЖНО: регистрируем ДО общего обработчика сообщений
-    dp.message.register(admin_handlers.cmd_admin, Command("admin"))
+    @dp.message(Command("admin"))
+    async def cmd_admin(message: types.Message, state: FSMContext):
+        await admin_handlers.cmd_admin(message, state)
 
     # Обработчики состояний админа
     dp.message.register(admin_handlers.check_admin_password, AdminStates.waiting_for_password)
@@ -100,6 +113,35 @@ async def main():
     dp.message.register(admin_handlers.process_edit_product_photo, AdminStates.editing_product_photo,
                         F.text == "пропустить")
     dp.message.register(admin_handlers.process_edit_product_photo, AdminStates.editing_product_photo, F.photo)
+
+    # REGOS orders management handlers
+    @dp.message(lambda message: message.text == "📦 Управление заказами REGOS")
+    async def regos_orders_menu(message: types.Message, state: FSMContext):
+        await admin_handlers.show_regos_orders_menu(message)
+
+    @dp.message(lambda message: message.text == "🔄 Синхронизировать заказы")
+    async def sync_regos_orders(message: types.Message):
+        await admin_handlers.sync_regos_orders(message)
+
+    @dp.message(lambda message: message.text == "📋 Проверить статус заказа")
+    async def check_regos_order_status(message: types.Message, state: FSMContext):
+        await admin_handlers.show_regos_order_status(message, state)
+
+    @dp.message(AdminStates.regos_check_order_status)
+    async def process_check_regos_order_status(message: types.Message, state: FSMContext):
+        await admin_handlers.process_regos_order_status(message, state)
+
+    @dp.message(lambda message: message.text == "✏️ Обновить статус заказа")
+    async def update_regos_order_status(message: types.Message, state: FSMContext):
+        await admin_handlers.update_regos_order_status(message, state)
+
+    @dp.message(AdminStates.regos_update_order_status)
+    async def process_update_regos_status(message: types.Message, state: FSMContext):
+        await admin_handlers.process_update_regos_status(message, state)
+
+    @dp.message(lambda message: message.text in ["🔙 Назад в админ-панель", "🔙 Назад к заказам"])
+    async def back_to_admin_menu(message: types.Message, state: FSMContext):
+        await admin_handlers.cmd_admin(message, state)
 
     # Неизвестные сообщения (регистрируется ПОСЛЕДНИМ)
     dp.message.register(user_handlers.unknown_message)

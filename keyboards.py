@@ -86,11 +86,11 @@ def get_admin_keyboard():
         keyboard=[
             [KeyboardButton(text="➕ Добавить товар"), KeyboardButton(text="✏️ Изменить товар")],
             [KeyboardButton(text="🗑 Удалить товар"), KeyboardButton(text="📋 Список товаров")],
+            [KeyboardButton(text="📦 Управление заказами REGOS")],
             [KeyboardButton(text="🔙 Выйти из админки")]
         ],
         resize_keyboard=True
     )
-
 
 def get_categories_admin_keyboard():
     categories = db.get_categories()
@@ -139,3 +139,29 @@ def get_confirm_order_keyboard():
             ]
         ]
     )
+
+
+def get_regos_orders_keyboard():
+    """Get keyboard for REGOS orders management"""
+    keyboard = [
+        [
+            KeyboardButton(text="🔄 Синхронизировать заказы"),
+            KeyboardButton(text="📋 Проверить статус заказа")
+        ],
+        [
+            KeyboardButton(text="✏️ Обновить статус заказа"),
+            KeyboardButton(text="🔙 Назад в админ-панель")
+        ]
+    ]
+    return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
+
+
+def get_regos_status_keyboard():
+    """Get keyboard with common REGOS status options"""
+    keyboard = [
+        [KeyboardButton(text="pending"), KeyboardButton(text="processing")],
+        [KeyboardButton(text="shipped"), KeyboardButton(text="delivered")],
+        [KeyboardButton(text="cancelled"), KeyboardButton(text="on_hold")],
+        [KeyboardButton(text="🔙 Назад к заказам")]
+    ]
+    return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)

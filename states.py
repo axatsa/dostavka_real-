@@ -21,16 +21,32 @@ class OrderStates(StatesGroup):
 class AdminStates(StatesGroup):
     waiting_for_password = State()
     admin_menu = State()
+    
+    # Product management states
     adding_product_name = State()
     adding_product_price = State()
     adding_product_quantity = State()
     adding_product_category = State()
     adding_product_photo = State()
+    
+    # Editing product states
     editing_product = State()
-    deleting_product = State()
     editing_product_select_field = State()
     editing_product_name = State()
     editing_product_price = State()
     editing_product_quantity = State()
     editing_product_category = State()
     editing_product_photo = State()
+    
+    # Deleting product state
+    deleting_product = State()
+    
+    # REGOS orders management states
+    regos_orders_menu = State()
+    regos_check_order_status = State()
+    regos_update_order_status = State()
+    
+    # Order management states (if not already present)
+    managing_orders = State()
+    viewing_order = State()
+    updating_order_status = State()
